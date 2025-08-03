@@ -64,7 +64,10 @@ const Settings: React.FC<SettingsProps> = ({
   const [serviceProviders, setServiceProviders] = useState<ServiceProvider[]>([])
   const [detectingAuth, setDetectingAuth] = useState<Record<string, boolean>>({})
   const [skipPermissions, setSkipPermissions] = useState<boolean>(true)
-  const [activeTab, setActiveTab] = useState<'general' | 'accounts' | 'providers' | 'proxy' | 'language'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'accounts' | 'providers' | 'proxy' | 'language' | 'import-export'>('general')
+  const [importing, setImporting] = useState<boolean>(false)
+  const [exporting, setExporting] = useState<boolean>(false)
+  const [includeSensitiveData, setIncludeSensitiveData] = useState<boolean>(false)
 
   useEffect(() => {
     loadSettings()
@@ -241,6 +244,56 @@ const Settings: React.FC<SettingsProps> = ({
     }
   }
 
+  const handleExportSettings = async () => {
+    try {
+      setExporting(true)
+      const result = await window.api.exportSettings(includeSensitiveData)
+      
+      if (result.canceled) {
+        return // 用户取消了操作
+      }
+      
+      if (result.success) {
+        const message = includeSensitiveData 
+          ? t('settings.exportSuccessWithSensitive') 
+          : t('settings.exportSuccess')
+        alert(message)
+      } else {
+        alert(t('settings.exportFailed') + (result.error ? `: ${result.error}` : ''))
+      }
+    } catch (error) {
+      console.error('导出配置失败:', error)
+      alert(t('settings.exportFailed'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleImportSettings = async () => {
+    try {
+      setImporting(true)
+      const result = await window.api.importSettings()
+      
+      if (result.canceled) {
+        return // 用户取消了操作
+      }
+      
+      if (result.success) {
+        const importedItems = result.imported?.join(', ') || ''
+        alert(t('settings.importSuccess') + (importedItems ? `\n\n${t('settings.importedItems')}: ${importedItems}` : ''))
+        // 重新加载设置
+        await loadSettings()
+      } else {
+        alert(t('settings.importFailed') + (result.error ? `: ${result.error}` : ''))
+      }
+    } catch (error) {
+      console.error('导入配置失败:', error)
+      alert(t('settings.importFailed'))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-gray-800 rounded-lg w-[900px] max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
@@ -307,6 +360,16 @@ const Settings: React.FC<SettingsProps> = ({
                 }`}
               >
                 {t('settings.language')}
+              </button>
+              <button
+                onClick={() => setActiveTab('import-export')}
+                className={`w-full text-left px-3 py-2 rounded text-sm ${
+                  activeTab === 'import-export' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'text-gray-300 hover:bg-gray-700'
+                }`}
+              >
+                {t('settings.importExport')}
               </button>
             </nav>
           </div>
@@ -710,26 +773,120 @@ const Settings: React.FC<SettingsProps> = ({
                 </div>
               </div>
             )}
+
+            {activeTab === 'import-export' && (
+              <div className="space-y-6">
+                <h3 className="text-lg font-medium">{t('settings.importExportSettings')}</h3>
+                
+                <div className="space-y-6">
+                  <div className="bg-gray-700 p-6 rounded-lg">
+                    <h4 className="text-lg font-medium mb-4">{t('settings.exportConfiguration')}</h4>
+                    <p className="text-sm text-gray-300 mb-4">
+                      {t('settings.exportDescription')}
+                    </p>
+                    
+                    <div className="mb-4">
+                      <label className="flex items-start space-x-3">
+                        <input
+                          type="checkbox"
+                          checked={includeSensitiveData}
+                          onChange={(e) => setIncludeSensitiveData(e.target.checked)}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium">{t('settings.includeSensitiveData')}</span>
+                          <p className="text-xs text-gray-400 mt-1">
+                            {t('settings.includeSensitiveDataDesc')}
+                          </p>
+                        </div>
+                      </label>
+                      
+                      {includeSensitiveData && (
+                        <div className="mt-3 p-3 bg-red-900/30 border border-red-700/50 rounded">
+                          <p className="text-red-300 text-sm font-medium">
+                            {t('settings.sensitiveDataWarning')}
+                          </p>
+                          <p className="text-red-200 text-xs mt-1">
+                            {t('settings.sensitiveDataWarningDesc')}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <button
+                      onClick={handleExportSettings}
+                      disabled={exporting}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 rounded transition-colors"
+                    >
+                      {exporting ? t('settings.exporting') : t('settings.exportSettings')}
+                    </button>
+                  </div>
+                  
+                  <div className="bg-gray-700 p-6 rounded-lg">
+                    <h4 className="text-lg font-medium mb-4">{t('settings.importConfiguration')}</h4>
+                    <p className="text-sm text-gray-300 mb-4">
+                      {t('settings.importDescription')}
+                    </p>
+                    <button
+                      onClick={handleImportSettings}
+                      disabled={importing}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 rounded transition-colors"
+                    >
+                      {importing ? t('settings.importing') : t('settings.importSettings')}
+                    </button>
+                  </div>
+                  
+                  <div className="p-4 bg-yellow-900/30 border border-yellow-700/50 rounded">
+                    <h4 className="font-medium text-yellow-300 mb-2">{t('settings.importExportNote')}</h4>
+                    <ul className="text-sm text-yellow-200 space-y-1 list-disc list-inside">
+                      <li>{t('settings.exportIncludesProxy')}</li>
+                      <li>{t('settings.exportIncludesTerminal')}</li>
+                      <li>{t('settings.exportIncludesProjectFilter')}</li>
+                      <li>{t('settings.exportIncludesAccounts')}</li>
+                      <li>{t('settings.sensitiveDataOptional')}</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="p-6 border-t border-gray-700 flex justify-between">
-          <button
-            onClick={onClose}
-            className="px-6 py-2 bg-gray-600 hover:bg-gray-700 rounded transition-colors"
-          >
-            {t('settings.cancel')}
-          </button>
-          <button
-            onClick={async () => {
-              // Save all settings before closing
-              await saveSettings()
-              onClose()
-            }}
-            className="px-6 py-2 bg-green-600 hover:bg-green-700 rounded transition-colors ml-3"
-          >
-            {t('settings.saveAndClose')}
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={handleImportSettings}
+              disabled={importing}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 rounded transition-colors"
+            >
+              {importing ? t('settings.importing') : t('settings.importSettings')}
+            </button>
+            <button
+              onClick={handleExportSettings}
+              disabled={exporting}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 rounded transition-colors"
+            >
+              {exporting ? t('settings.exporting') : t('settings.exportSettings')}
+            </button>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="px-6 py-2 bg-gray-600 hover:bg-gray-700 rounded transition-colors"
+            >
+              {t('settings.cancel')}
+            </button>
+            <button
+              onClick={async () => {
+                // Save all settings before closing
+                await saveSettings()
+                onClose()
+              }}
+              className="px-6 py-2 bg-green-600 hover:bg-green-700 rounded transition-colors"
+            >
+              {t('settings.saveAndClose')}
+            </button>
+          </div>
         </div>
       </div>
     </div>

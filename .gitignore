@@ -41,3 +41,4 @@ Thumbs.db
 .claude/
 package-lock.json
 bun.lock
+yarn.lock

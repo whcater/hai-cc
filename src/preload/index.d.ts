@@ -62,6 +62,8 @@ declare global {
       updateSettings: (settings: any) => Promise<void>
       getProjectFilterConfig: () => Promise<any>
       updateProjectFilterConfig: (config: any) => Promise<void>
+      exportSettings: (includeSensitiveData?: boolean) => Promise<{ success: boolean; canceled?: boolean; error?: string }>
+      importSettings: () => Promise<{ success: boolean; canceled?: boolean; error?: string; imported?: string[] }>
 
       // Account Management APIs
       getServiceProviders: () => Promise<any[]>

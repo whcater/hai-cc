@@ -185,7 +185,7 @@ async function checkAuthenticationForSession(): Promise<{ isAuthenticated: boole
     }
 
     // If we have a third-party account, authentication check is passed
-    if (activeResult.accountType === 'third-party') {
+    if (activeResult.provider.type === 'third_party') {
       return { isAuthenticated: true }
     }
 
@@ -1153,6 +1153,72 @@ function setupIpcHandlers(mainWindow: BrowserWindow): void {
     } catch (error) {
       logger.error('应用项目过滤器失败', 'main', error as Error)
       throw error
+    }
+  })
+
+  // Settings import/export
+  ipcMain.handle('settings:export', async (_, includeSensitiveData = false) => {
+    try {
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: '导出配置',
+        defaultPath: `cc-copilot-settings-${new Date().toISOString().split('T')[0]}.json`,
+        filters: [
+          { name: 'JSON 文件', extensions: ['json'] },
+          { name: '所有文件', extensions: ['*'] }
+        ]
+      })
+
+      if (result.canceled || !result.filePath) {
+        return { success: false, canceled: true }
+      }
+
+      return await settingsManager.exportSettings(result.filePath, includeSensitiveData)
+    } catch (error) {
+      logger.error('导出配置失败', 'main', error as Error)
+      return { success: false, error: (error as Error).message }
+    }
+  })
+
+  ipcMain.handle('settings:import', async () => {
+    try {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: '导入配置',
+        filters: [
+          { name: 'JSON 文件', extensions: ['json'] },
+          { name: '所有文件', extensions: ['*'] }
+        ],
+        properties: ['openFile']
+      })
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true }
+      }
+
+      const importResult = await settingsManager.importSettings(result.filePaths[0])
+      
+      if (importResult.success) {
+        // Trigger a resync to apply imported settings
+        try {
+          sessionManager.syncWithClaudeDirectory()
+          // Notify renderer about updated projects
+          const projects = sessionManager.getProjects()
+          const sessions = sessionManager.getAllSessions()
+          const projectsWithSessions = projects.map(p => ({
+            ...p,
+            sessions: sessions
+              .filter(s => s.projectId === p.id)
+              .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
+          }))
+          safelySendToRenderer(mainWindow, 'projects:updated', projectsWithSessions)
+        } catch (error) {
+          logger.error('应用导入配置失败', 'main', error as Error)
+        }
+      }
+      
+      return importResult
+    } catch (error) {
+      logger.error('导入配置失败', 'main', error as Error)
+      return { success: false, error: (error as Error).message }
     }
   })
 

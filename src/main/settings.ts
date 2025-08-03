@@ -435,6 +435,218 @@ export class SettingsManager extends EventEmitter {
     this.updateTerminalConfig({ skipPermissions })
   }
 
+  // 导出配置到文件
+  async exportSettings(filePath: string, includeSensitiveData = false): Promise<{ success: boolean, error?: string }> {
+    try {
+      const fs = require('fs').promises
+      
+      // 获取当前所有设置
+      const settings = this.getSettings()
+      
+      // 创建导出数据结构
+      const exportData = {
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        includeSensitiveData: includeSensitiveData,
+        settings: {
+          proxyConfig: {
+            enabled: settings.proxyConfig.enabled,
+            url: settings.proxyConfig.url,
+            // 根据选项决定是否导出代理认证信息
+            ...(includeSensitiveData && settings.proxyConfig.auth ? {
+              auth: {
+                username: this.encodeData(settings.proxyConfig.auth.username || ''),
+                password: this.encodeData(settings.proxyConfig.auth.password || '')
+              }
+            } : {})
+          },
+          terminal: settings.terminal,
+          projectFilter: settings.projectFilter,
+          serviceProviders: settings.serviceProviders.map(provider => {
+            if (provider.type === 'claude_official') {
+              return {
+                id: provider.id,
+                type: provider.type,
+                name: provider.name,
+                useProxy: provider.useProxy,
+                activeAccountId: provider.activeAccountId,
+                accounts: (provider.accounts as ClaudeAccount[]).map(account => ({
+                  accountUuid: account.accountUuid,
+                  emailAddress: account.emailAddress,
+                  organizationUuid: account.organizationUuid,
+                  organizationRole: account.organizationRole,
+                  workspaceRole: account.workspaceRole,
+                  organizationName: account.organizationName,
+                  // 根据选项决定是否导出 authorization 敏感信息
+                  ...(includeSensitiveData && account.authorization ? {
+                    authorization: this.encodeData(account.authorization)
+                  } : {})
+                }))
+              }
+            } else {
+              return {
+                id: provider.id,
+                type: provider.type,
+                name: provider.name,
+                useProxy: provider.useProxy,
+                activeAccountId: provider.activeAccountId,
+                accounts: (provider.accounts as ThirdPartyAccount[]).map(account => ({
+                  id: account.id,
+                  name: account.name,
+                  baseUrl: account.baseUrl,
+                  description: account.description,
+                  // 根据选项决定是否导出 apiKey 敏感信息
+                  ...(includeSensitiveData && account.apiKey ? {
+                    apiKey: this.encodeData(account.apiKey)
+                  } : {})
+                }))
+              }
+            }
+          })
+        }
+      }
+      
+      await fs.writeFile(filePath, JSON.stringify(exportData, null, 2), 'utf-8')
+      return { success: true }
+    } catch (error) {
+      console.error('导出配置失败:', error)
+      return { success: false, error: (error as Error).message }
+    }
+  }
+
+  // 从文件导入配置
+  async importSettings(filePath: string): Promise<{ success: boolean, error?: string, imported?: string[] }> {
+    try {
+      const fs = require('fs').promises
+      
+      // 读取配置文件
+      const configData = await fs.readFile(filePath, 'utf-8')
+      const importData = JSON.parse(configData)
+      
+      // 验证文件格式
+      if (!importData.version || !importData.settings) {
+        return { success: false, error: '配置文件格式无效' }
+      }
+      
+      const imported: string[] = []
+      const importSettings = importData.settings
+      const hasSensitiveData = importData.includeSensitiveData === true
+      
+      // 导入代理配置
+      if (importSettings.proxyConfig) {
+        const proxyConfig: any = {
+          enabled: importSettings.proxyConfig.enabled,
+          url: importSettings.proxyConfig.url
+        }
+        
+        // 如果包含敏感数据，导入认证信息
+        if (hasSensitiveData && importSettings.proxyConfig.auth) {
+          proxyConfig.auth = {
+            username: this.decodeData(importSettings.proxyConfig.auth.username || ''),
+            password: this.decodeData(importSettings.proxyConfig.auth.password || '')
+          }
+        }
+        
+        this.updateProxyConfig(proxyConfig)
+        imported.push('代理配置' + (hasSensitiveData ? '（包含认证信息）' : ''))
+      }
+      
+      // 导入终端配置
+      if (importSettings.terminal) {
+        this.updateTerminalConfig(importSettings.terminal)
+        imported.push('终端配置')
+      }
+      
+      // 导入项目过滤配置
+      if (importSettings.projectFilter) {
+        this.updateProjectFilterConfig(importSettings.projectFilter)
+        imported.push('项目过滤配置')
+      }
+      
+      // 导入服务提供商配置和账号信息
+      if (importSettings.serviceProviders && Array.isArray(importSettings.serviceProviders)) {
+        let importedAccountsCount = 0
+        let importedSensitiveCount = 0
+        
+        for (const importedProvider of importSettings.serviceProviders) {
+          if (importedProvider.type === 'claude_official' && importedProvider.accounts) {
+            // 导入Claude官方账号
+            const claudeAccounts: ClaudeAccount[] = importedProvider.accounts.map((account: any) => ({
+              accountUuid: account.accountUuid,
+              emailAddress: account.emailAddress,
+              organizationUuid: account.organizationUuid,
+              organizationRole: account.organizationRole,
+              workspaceRole: account.workspaceRole,
+              organizationName: account.organizationName,
+              // 如果包含敏感数据且有authorization，解码后导入
+              ...(hasSensitiveData && account.authorization ? {
+                authorization: this.decodeData(account.authorization)
+              } : {})
+            }))
+            
+            this.updateClaudeAccounts(claudeAccounts)
+            importedAccountsCount += claudeAccounts.length
+            if (hasSensitiveData) {
+              importedSensitiveCount += claudeAccounts.filter(acc => acc.authorization).length
+            }
+          } else if (importedProvider.type === 'third_party' && importedProvider.accounts) {
+            // 导入第三方账号
+            for (const account of importedProvider.accounts) {
+              if (account.id && account.name && account.baseUrl) {
+                const thirdPartyAccount: ThirdPartyAccount = {
+                  id: account.id,
+                  name: account.name,
+                  baseUrl: account.baseUrl,
+                  description: account.description || '',
+                  // 如果包含敏感数据且有apiKey，解码后导入
+                  apiKey: (hasSensitiveData && account.apiKey) 
+                    ? this.decodeData(account.apiKey) 
+                    : ''
+                }
+                this.addThirdPartyAccount(importedProvider.id, thirdPartyAccount)
+                importedAccountsCount++
+                if (hasSensitiveData && account.apiKey) {
+                  importedSensitiveCount++
+                }
+              }
+            }
+          }
+        }
+        
+        if (importedAccountsCount > 0) {
+          let accountMessage = `账号配置 (${importedAccountsCount}个账号)`
+          if (hasSensitiveData && importedSensitiveCount > 0) {
+            accountMessage += `，包含${importedSensitiveCount}个账号的敏感信息`
+          }
+          imported.push(accountMessage)
+        }
+      }
+      
+      this.emit('settings:imported', { imported })
+      return { success: true, imported }
+    } catch (error) {
+      console.error('导入配置失败:', error)
+      return { success: false, error: (error as Error).message }
+    }
+  }
+
+  // 编码敏感数据（简单Base64编码）
+  private encodeData(data: string): string {
+    if (!data) return ''
+    return Buffer.from(data, 'utf-8').toString('base64')
+  }
+
+  // 解码敏感数据
+  private decodeData(encodedData: string): string {
+    if (!encodedData) return ''
+    try {
+      return Buffer.from(encodedData, 'base64').toString('utf-8')
+    } catch (error) {
+      console.warn('解码数据失败:', error)
+      return ''
+    }
+  }
+
   // 读取Claude配置文件
   private async readClaudeAccountsFromConfig(): Promise<ClaudeAccount[]> {
     const os = require('os')

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { LogEntry } from './index.d.ts'
+import type { LogEntry } from '../main/logger'
 
 // Logger API for renderer
 const loggerAPI = {
@@ -124,6 +124,8 @@ const api = {
   updateSettings: (settings: any) => ipcRenderer.invoke('settings:update', settings),
   getProjectFilterConfig: () => ipcRenderer.invoke('settings:get-project-filter'),
   updateProjectFilterConfig: (config: any) => ipcRenderer.invoke('settings:update-project-filter', config),
+  exportSettings: (includeSensitiveData?: boolean) => ipcRenderer.invoke('settings:export', includeSensitiveData),
+  importSettings: () => ipcRenderer.invoke('settings:import'),
 
   // Account Management APIs
   getServiceProviders: () => ipcRenderer.invoke('accounts:get-service-providers'),
